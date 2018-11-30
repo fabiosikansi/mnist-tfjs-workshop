@@ -28,7 +28,21 @@ async function loadData() {
  * Create a Convolutional Neural Network
  */
 function createConvModel() {
-  // TODO
+  const model = tf.sequential();
+  model.add(tf.layers.conv2d({
+    inputShape: [IMAGE_H, IMAGE_W, 1],
+    kernelSize: 3,
+    filters: 16,
+    activation: "relu"
+  }));
+  model.add(tf.layers.maxPooling2d({ poolSize: 2, strides: 2 }));
+  model.add(tf.layers.conv2d({ kernelSize: 3, filters: 32, activation: "relu" }));
+  model.add(tf.layers.maxPooling2d({ poolSize: 2, strides: 2 }));
+  model.add(tf.layers.conv2d({ kernelSize: 3, filters: 32, activation: "relu" }));
+  model.add(tf.layers.flatten({}));
+  model.add(tf.layers.dense({ units: 64, activation: "relu" }));
+  model.add(tf.layers.dense({ units: 10, activation: "softmax" }));
+  return model;
 }
 
 /**
@@ -36,18 +50,70 @@ function createConvModel() {
  */
 
 function createDenseModel() {
-  // TODO
+  const model = tf.sequential();
+  model.add(tf.layers.flatten({ inputShape: [IMAGE_H, IMAGE_W, 1] }));
+  model.add(tf.layers.dense({ units: 42, activation: "relu" }));
+  model.add(tf.layers.dense({ units: 10, activation: "softmax" }));
+  return model;
 }
 
 /**
  * Train the model with the training data
  */
 async function trainModel() {
-  // TODO
+  MODEL = createConvModel();
+  MODEL.compile({
+    optimizer: "rmsprop",
+    loss: "categoricalCrossentropy",
+    metrics: ["accuracy"]
+  });
+
+  const { xs, labels } = DATA.getTrainData();
+  console.log("Training...");
+
+  let trainBatchCount = 0;
+  const totalNumBatches = Math.ceil((xs.shape[0] * (1 - VALIDATION_SPLIT)) / BATCH_SIZE) * EPOCHS;
+
+  await MODEL.fit(xs, labels, { 
+    batchSize: BATCH_SIZE, 
+    validationSplit: VALIDATION_SPLIT, 
+    epochs: EPOCHS,
+    callbacks: {
+      onBatchEnd: async (batch, { acc }) => {
+        trainBatchCount++;
+        let percentComplete = ((trainBatchCount / totalNumBatches) * 100).toFixed(1);
+        PROGRESS_UI.setProgress(percentComplete);
+        PROGRESS_UI.setStatus(`ACC ${(acc * 100).toFixed(1)}%`);
+        console.log(`Training... (${percentComplete}% complete)`);
+        await tf.nextFrame();
+      },
+      onEpochEnd: async (epoch, { val_acc }) => {
+        console.log(`Accuracy: ${val_acc}`);
+        PROGRESS_UI.setStatus(`ACC ${(val_acc * 100).toFixed(1)}%`);
+        await tf.nextFrame();
+      }
+    }
+  });
+  console.log("Training Finished!");
+  
+  const {xs: testXs, labels: testLabels } = DATA.getTestData();
+  const testResult = MODEL.evaluate(testXs, testLabels);
+  const testAccPercent = testResult[1].dataSync()[0] * 100;
+  console.log(`Final test accuracy: ${testAccPercent.toFixed(1)}%`);
+
 }
 
 function inferModel(data) {
-  // TODO
+  let inputs = tf.tensor4d(data, [1, 28, 28, 1]);
+  const output = MODEL.predict(inputs);
+  output.print();
+  const distribution = output.dataSync();
+  const axis = 1;
+  const prediction = Array.from(output.argMax(axis).dataSync())[0];
+  inputs.dispose();
+  output.dispose();
+  return { prediction, distribution };
+
 }
 
 async function loadAndTrain() {
@@ -172,7 +238,6 @@ async function predictDigit() {
     // Not so great to use inputs of 0 so smallest value is 0.01
     inputs[i / 4] = map(smaller.pixels[i], 0, 255, 0, 0.99) + 0.01;
   }
-  console.log(inputs);
   // Get predictions based on that image
   let data = inferModel(inputs);
   PREDICTION_UI.setData(data);
